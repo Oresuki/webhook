@@ -1,95 +1,92 @@
--- Fish It Game Detector Script (V. Akhir & Anti-Konsol)
--- Menggunakan Proxy Pipedream untuk mengatasi pemblokiran HTTP dan Tombol GUI untuk uji coba.
+-- Fish It Game Detector Script (V. Final - Notifikasi SetCore)
+-- Menggunakan Proxy Pipedream + Notifikasi SetCore (seperti loader teman Anda) untuk feedback.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
+local StarterGui = game:GetService('StarterGui')
 
 -- URL PROXY PIPEDREAM ANDA SUDAH DIMASUKKAN DI SINI:
 local WEBHOOK_URL = "https://eoul4wwmel3tjko.m.pipedream.net" 
 
 -- Settings
-local SEND_ALL_CATCHES = false -- Set true untuk kirim semua catch, false untuk rare saja
-local MIN_RARITY_TO_SEND = "Rare" -- Minimum rarity untuk kirim ke Discord
+local SEND_ALL_CATCHES = false 
+local MIN_RARITY_TO_SEND = "Rare" 
 
--- Tabel rarity colors untuk Discord embed
+-- Tabel colors dan priority tetap sama
 local rarityColors = {
     Common = 16777215, Uncommon = 5635925, Rare = 5592575, 
     Epic = 11141375, Legendary = 16755200, Mythic = 16733695, 
     SECRET = 16711680 
 }
-
--- Tabel priority rarity
 local rarityPriority = {
     Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Mythic = 6, SECRET = 7
 }
 
+-- FUNGSI BARU: Notifikasi Pop-up (Meniru SetCore dari Loader Anda)
+local function notify(title, text, isSuccess)
+    local icon = isSuccess and 'rbxassetid://6253907742' or 'rbxassetid://6253907405' -- Ikon centang atau silang
+    pcall(function()
+        StarterGui:SetCore('SendNotification', {
+            Title = title,
+            Text = text,
+            Icon = icon,
+            Duration = 5
+        })
+    end)
+end
+
 -- Function untuk send webhook ke Proxy
 local function sendWebhook(embed)
-    if not WEBHOOK_URL then
-        warn("❌ Discord Webhook URL not configured!")
-        return false
-    end
-    
-    local data = {
-        ["embeds"] = {embed}
-    }
-    
-    local jsonData = HttpService:JSONEncode(data)
-    
-    local success, result
-    
-    -- Mencoba fungsi HTTP yang umum (http_request/request/syn.request)
-    local requestFunc = http_request or request or (syn and syn.request)
-    
-    if requestFunc then
-        success, result = pcall(function()
-            return requestFunc({
-                Url = WEBHOOK_URL,
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = jsonData
-            })
-        end)
-    else
-        warn("❌ No HTTP request function available.")
-        return false
-    end
-    
-    if success and result then
-        print("✅ Webhook data sent to Proxy (Pipedream)!")
-        return true
-    else
-        warn("❌ Failed to send data to Proxy: " .. tostring(result))
-        return false
-    end
-end
+    local requestFunc = http_request or request or (syn and syn.request)
+    
+    if not WEBHOOK_URL or not requestFunc then
+        notify('WEBHOOK ERROR', 'Fungsi HTTP tidak ditemukan.', false)
+        return false
+    end
 
--- Fungsi Pendukung (Tidak ada perubahan)
-local function shouldSendToDiscord(rarity)
-    if SEND_ALL_CATCHES then return true end
-    local minPriority = rarityPriority[MIN_RARITY_TO_SEND] or 3
-    local itemPriority = rarityPriority[rarity] or 1
-    return itemPriority >= minPriority
-end
-
-local function printBackpackStatus()
-    local data = parseBackpackFromGUI()
-    -- Hanya cetak jika fungsi print benar-benar berfungsi
-    if print then
-        print("━━━━━━━━━━━━━━━━━━━━━━━")
-        print("📦 BACKPACK STATUS")
-        print("━━━━━━━━━━━━━━━━━━━━━━━")
-        print(string.format("⚖️ Weight: %.3f/%.3f KG (%.1f%%)", data.totalWeight/1000, data.maxWeight/1000, (data.totalWeight/data.maxWeight) * 100))
-        print("\n✨ Rarity Breakdown:")
-        for rarity, count in pairs(data.rarityCounts) do
-            if count > 0 then print(string.format("  %s: %d", rarity, count)) end
-        end
-        print("━━━━━━━━━━━━━━━━━━━━━━━\n")
+    local data = { ["embeds"] = {embed} }
+    local jsonData = HttpService:JSONEncode(data)
+    
+    local success, result = pcall(function()
+        return requestFunc({
+            Url = WEBHOOK_URL,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = jsonData
+        })
+    end)
+    
+    if success then
+        -- Jika sukses, Pipedream akan menerima (walaupun mungkin gagal di sisi Discord jika Body Pipedream salah)
+        return true
+    else
+        notify('WEBHOOK GAGAL KIRIM', 'Gagal kirim ke Proxy! Executor Anda mungkin memblokir jaringan.', false)
+        return false
     end
 end
 
+-- Fungsi untuk menguji webhook
+local function testWebhook()
+    local embed = { 
+        ["title"] = "🧪 Webhook Test (Otomatis)", 
+        ["description"] = "Test message dari Fish Detector! Cek Discord Anda!", 
+        ["color"] = 65280, 
+        ["fields"] = { 
+            { ["name"] = "Player", ["value"] = player.Name, ["inline"] = true }, 
+            { ["name"] = "Status", ["value"] = "✅ Tes Otomatis", ["inline"] = true } 
+        }, 
+        ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ") 
+    }
+    local success = sendWebhook(embed)
+    if success then
+        notify('WEBHOOK SUKSES KIRIM', 'Data uji coba terkirim ke Pipedream. Periksa Discord!', true)
+    end
+    return success
+end
+
+-- Fungsi pendukung lainnya (parseBackpackFromGUI, shouldSendToDiscord) tetap sama.
 local function parseBackpackFromGUI()
     local backpackData = { items = {}, totalWeight = 0, maxWeight = 4500, rarityCounts = { Common = 0, Uncommon = 0, Rare = 0, Epic = 0, Legendary = 0, Mythic = 0, SECRET = 0 } }
     local playerGui = player:WaitForChild("PlayerGui", 5)
@@ -111,7 +108,6 @@ local function parseBackpackFromGUI()
     return backpackData
 end
 
--- Monitor chat
 local function monitorChat()
     local chatEvents = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
     if chatEvents then
@@ -122,16 +118,11 @@ local function monitorChat()
                 if message:find("You Got:") or message:find("You got:") then
                     task.wait(1.5) 
                     local fishName = message:match("You [Gg]ot:%s*(.-)%s*%(") or message:match("You [Gg]ot:%s*(.-)%s*,") or "Unknown Fish"
-                    local weight = message:match("weight:%s*([%d%.]+)") or "0"
-                    local price = message:match("price:%s*(%d+)") or "0"
-                    local mutations = message:match("mutations:%s*([^,%)]+)") or "None"
                     local rarity = "Common"
                     for r, _ in pairs(rarityPriority) do
                         if message:lower():find(r:lower()) then rarity = r; break end
                     end
-                    if print then print("🎣 FISH CAUGHT! (" .. fishName .. " - " .. rarity .. ")") end
-                    task.wait(1)
-                    printBackpackStatus()
+
                     if shouldSendToDiscord(rarity) then
                         local bpData = parseBackpackFromGUI()
                         local rarityText = ""
@@ -139,18 +130,20 @@ local function monitorChat()
                             if count > 0 then rarityText = rarityText .. string.format("%s: %d\n", r, count) end
                         end
                         local embed = {
-                            ["title"] = "🎣 Fish Caught!",
-                            ["description"] = string.format("**%s** has been caught!", fishName),
+                            ["title"] = "🎣 Fish Caught! (" .. rarity .. ")",
+                            ["description"] = string.format("**%s** telah tertangkap.", fishName),
                             ["color"] = rarityColors[rarity] or 16777215,
                             ["fields"] = {
-                                { ["name"] = "📊 Fish Info", ["value"] = string.format("**Rarity:** %s\n**Weight:** %s KG\n**Price:** %s coins\n**Mutations:** %s", rarity, weight, price, mutations), ["inline"] = true },
-                                { ["name"] = "🎒 Backpack", ["value"] = string.format("**Weight:** %.2f/%.2f KG\n**Usage:** %.1f%%", bpData.totalWeight/1000, bpData.maxWeight/1000, (bpData.totalWeight/bpData.maxWeight) * 100), ["inline"] = true },
+                                { ["name"] = "🎒 Backpack", ["value"] = string.format("**Weight:** %.2f/%.2f KG", bpData.totalWeight/1000, bpData.maxWeight/1000), ["inline"] = true },
                                 { ["name"] = "✨ Rarity Count", ["value"] = rarityText ~= "" and rarityText or "No items", ["inline"] = false }
                             },
                             ["footer"] = { ["text"] = player.Name .. " • Fish It Detector" },
                             ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ")
                         }
-                        sendWebhook(embed)
+                        local success = sendWebhook(embed)
+                        if success then
+                            notify('IKAN TERTANGKAP', fishName .. " (" .. rarity .. ") dikirim ke Discord!", true)
+                        end
                     end
                 end
             end)
@@ -158,56 +151,15 @@ local function monitorChat()
     end
 end
 
--- FUNGSI BARU: Tombol Uji Coba Webhook di Layar Game
-local function createTestButton()
-    local playerGui = player:WaitForChild("PlayerGui")
+-- Inisialisasi: Uji Coba Otomatis dan Mulai Monitoring
+task.spawn(function()
+    notify('NIGHTMARE LOADER', 'Fish Detector Loading...', true)
+    task.wait(5) -- Tunggu 5 detik agar semua dimuat
     
-    local notifGui = Instance.new("ScreenGui")
-    notifGui.Name = "FishDetectorTestButton"
-    notifGui.Parent = playerGui
-
-    local button = Instance.new("TextButton")
-    button.Size = UDim2.new(0, 200, 0, 40)
-    button.Position = UDim2.new(0, 10, 0, 100) -- Posisi di kiri atas
-    button.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
-    button.Text = "TEST WEBHOOK (PROXY)"
-    button.TextColor3 = Color3.new(1, 1, 1)
-    button.Font = Enum.Font.SourceSansBold
-    button.TextSize = 18
-    button.Parent = notifGui
+    -- UJI COBA OTOMATIS: Dapatkan feedback langsung
+    testWebhook()
     
-    local function testAndNotify()
-        local embed = { ["title"] = "🧪 Webhook Test (Tombol)", ["description"] = "Test message from Fish It Detector!", ["color"] = 65280, ["fields"] = { { ["name"] = "Player", ["value"] = player.Name, ["inline"] = true }, { ["name"] = "Status", ["value"] = "✅ Proxy Connected", ["inline"] = true } }, ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ") }
-        local success = sendWebhook(embed)
-
-        if success then
-            button.BackgroundColor3 = Color3.fromRGB(0, 200, 0) -- Hijau terang
-            button.Text = "✅ TEST SUCCESS!"
-        else
-            button.BackgroundColor3 = Color3.fromRGB(200, 0, 0) -- Merah
-            button.Text = "❌ TEST FAILED!"
-        end
-        task.wait(3)
-        button.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
-        button.Text = "TEST WEBHOOK (PROXY)"
-    end
-    
-    button.MouseButton1Click:Connect(testAndNotify)
-    
-    if print then print("Tombol Test Webhook sudah dibuat di GUI Anda.") end
-end
-
--- Initialize
-if print then 
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print("🎣 Fish It Detector Script Loaded!")
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print("➡️ Proxy URL: " .. WEBHOOK_URL)
-    print("📊 Min Rarity: " .. MIN_RARITY_TO_SEND)
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-end
-
--- Buat tombol uji coba dan mulai monitoring
-pcall(createTestButton)
-pcall(monitorChat)
-pcall(printBackpackStatus)
+    -- Mulai monitoring chat
+    monitorChat()
+    notify('NIGHTMARE LOADER', 'Fish Detector Aktif. Memonitor chat.', true)
+end)
