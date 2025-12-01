@@ -1,29 +1,42 @@
--- Fish It Game Detector Script (V. Final - UI Manager)
--- Menggunakan UI sederhana untuk memasukkan Webhook URL dan menampilkan status.
+-- CONFIG
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1415137396290224239/ubcezXBLeK03AhRtLcLQcq-dI2j1PGwa3QREOOIQTAY4ZazFFcgI2nuQBQRTc9DzP97A"
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
+
 local player = Players.LocalPlayer
-local StarterGui = game:GetService('StarterGui')
 
--- Variabel URL Webhook (akan diisi dari UI)
-local WEBHOOK_URL = "https://eoul4wwmel3tjko.m.pipedream.net" 
+-- SETTINGS
+local DEBUG_MODE = true
+local SEND_INTERVAL = 30
+local BATCH_SIZE = 10
+local processedFishIds = {}
+local fishBuffer = {}
+local scriptStartTime = os.time()
 
--- Settings
-local MIN_RARITY_TO_SEND = "Rare" 
-
--- [Kode Warna dan Prioritas Rarity tetap sama]
-local rarityColors = {
-    Common = 16777215, Uncommon = 5635925, Rare = 5592575, 
-    Epic = 11141375, Legendary = 16755200, Mythic = 16733695, 
-    SECRET = 16711680 
+-- Stats tracking
+local stats = {
+    botName = player.Name,
+    currentLocation = "Unknown",
+    rodName = "Unknown Rod",
+    currentCoin = "0",
+    totalFishCaught = 0,
+    rarityInBackpack = {
+        Common = 0,
+        Uncommon = 0,
+        Rare = 0,
+        Epic = 0,
+        Legendary = 0,
+        Mythic = 0,
+        SECRET = 0
+    }
 }
-local rarityPriority = {
-    Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Mythic = 6, SECRET = 7
-}
 
--- FUNGSI: Notifikasi Pop-up (menggunakan SetCore)
+----------------------------------------------------------------------
+-- 🔔 Notification System
+----------------------------------------------------------------------
 local function notify(title, text, isSuccess)
     local icon = isSuccess and 'rbxassetid://6253907742' or 'rbxassetid://6253907405'
     pcall(function()
@@ -36,177 +49,673 @@ local function notify(title, text, isSuccess)
     end)
 end
 
--- FUNGSI: sendWebhook (Inti komunikasi HTTP)
-local function sendWebhook(embed)
-    local requestFunc = http_request or request or (syn and syn.request)
+local function debugPrint(...)
+    if DEBUG_MODE then
+        print("🐛 [" .. os.date("%H:%M:%S") .. "]", ...)
+    end
+end
+
+local function getUptime()
+    local elapsed = os.time() - scriptStartTime
+    local hours = math.floor(elapsed / 3600)
+    local minutes = math.floor((elapsed % 3600) / 60)
+    local seconds = elapsed % 60
+    return string.format("%dh %dm %ds", hours, minutes, seconds)
+end
+
+----------------------------------------------------------------------
+-- 📍 REAL-TIME LOCATION DETECTION
+----------------------------------------------------------------------
+local function getPlayerLocation()
+    local location = "Unknown"
     
-    if not WEBHOOK_URL or not requestFunc then
-        notify('WEBHOOK ERROR', 'URL atau fungsi HTTP tidak ditemukan.', false)
+    pcall(function()
+        -- Method 1: Check character position and find nearest zone
+        local char = player.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local pos = char.HumanoidRootPart.Position
+            
+            -- Check workspace for zone/area folders
+            local workspace = game:GetService("Workspace")
+            
+            -- Common location folder names in fishing games
+            local locationFolders = {
+                "Zones", "Areas", "Islands", "Locations", "Regions", "Maps"
+            }
+            
+            for _, folderName in ipairs(locationFolders) do
+                local folder = workspace:FindFirstChild(folderName)
+                if folder then
+                    for _, zone in ipairs(folder:GetChildren()) do
+                        if zone:IsA("Model") or zone:IsA("Folder") then
+                            -- Check if player is inside this zone
+                            local zonePart = zone:FindFirstChild("Zone") or zone:FindFirstChild("Part") or zone:FindFirstChildWhichIsA("BasePart")
+                            if zonePart then
+                                local distance = (pos - zonePart.Position).Magnitude
+                                if distance < 500 then -- Within zone range
+                                    location = zone.Name
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- Method 2: Check PlayerData for location
+        local dataFolder = ReplicatedStorage:FindFirstChild("PlayerData")
+        if dataFolder then
+            local profile = dataFolder:FindFirstChild(player.UserId)
+            if profile then
+                local locValue = profile:FindFirstChild("Location") or 
+                                profile:FindFirstChild("CurrentLocation") or
+                                profile:FindFirstChild("Zone") or
+                                profile:FindFirstChild("Area")
+                if locValue then
+                    location = tostring(locValue.Value)
+                end
+            end
+        end
+        
+        -- Method 3: Check PlayerGui for location display
+        local PlayerGui = player:FindFirstChild("PlayerGui")
+        if PlayerGui then
+            for _, gui in ipairs(PlayerGui:GetDescendants()) do
+                if gui:IsA("TextLabel") then
+                    local text = gui.Text:lower()
+                    if text:find("location:") or text:find("zone:") or text:find("area:") then
+                        -- Extract location name
+                        local locName = gui.Text:match(":%s*(.+)")
+                        if locName then
+                            location = locName
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- Method 4: Check for common island/zone names in player vicinity
+        local char = player.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local pos = char.HumanoidRootPart.Position
+            local nearbyParts = workspace:GetPartBoundsInRadius(pos, 300)
+            
+            for _, part in ipairs(nearbyParts) do
+                local name = part.Name
+                -- Common fishing location keywords
+                if name:find("Island") or name:find("Bay") or name:find("Ocean") or 
+                   name:find("Lake") or name:find("Pond") or name:find("River") or
+                   name:find("Shore") or name:find("Beach") or name:find("Reef") then
+                    location = name
+                    break
+                end
+            end
+        end
+    end)
+    
+    return location
+end
+
+-- Update location continuously
+task.spawn(function()
+    while true do
+        stats.currentLocation = getPlayerLocation()
+        task.wait(5) -- Update every 5 seconds
+    end
+end)
+
+----------------------------------------------------------------------
+-- 🎣 REAL-TIME FISH RARITY DETECTION
+----------------------------------------------------------------------
+local FishRarityDatabase = {}
+
+local function buildFishRarityDatabase()
+    debugPrint("🔍 Building fish rarity database...")
+    
+    pcall(function()
+        -- Method 1: Scan ReplicatedStorage for fish data
+        local storage = ReplicatedStorage:FindFirstChild("FishData") or 
+                       ReplicatedStorage:FindFirstChild("Fish") or
+                       ReplicatedStorage:FindFirstChild("GameData")
+        
+        if storage then
+            for _, fishData in ipairs(storage:GetDescendants()) do
+                if fishData:IsA("Folder") or fishData:IsA("Configuration") then
+                    local fishName = fishData.Name
+                    local rarityValue = fishData:FindFirstChild("Rarity")
+                    
+                    if rarityValue then
+                        FishRarityDatabase[fishName] = tostring(rarityValue.Value)
+                        debugPrint("  ✅ Added:", fishName, "=", rarityValue.Value)
+                    end
+                end
+            end
+        end
+        
+        -- Method 2: Scan player inventory for existing fish rarities
+        local dataFolder = ReplicatedStorage:FindFirstChild("PlayerData")
+        if dataFolder then
+            local profile = dataFolder:FindFirstChild(player.UserId)
+            if profile then
+                local inv = profile:FindFirstChild("Inventory")
+                if inv then
+                    for _, fish in ipairs(inv:GetChildren()) do
+                        local rarityValue = fish:FindFirstChild("Rarity")
+                        if rarityValue then
+                            FishRarityDatabase[fish.Name] = tostring(rarityValue.Value)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    
+    local count = 0
+    for _ in pairs(FishRarityDatabase) do count = count + 1 end
+    debugPrint("📚 Fish database built with", count, "entries")
+end
+
+local function getRealTimeFishRarity(fishName, fishData)
+    local rarity = "Common"
+    
+    -- Priority 1: Get from fishData if it's provided
+    if fishData then
+        if type(fishData) == "table" then
+            local rarityValue = fishData.Rarity or fishData.rarity or fishData.Tier or fishData.tier
+            if rarityValue then
+                rarity = tostring(rarityValue)
+                -- Update database
+                FishRarityDatabase[fishName] = rarity
+                return rarity
+            end
+        end
+        
+        if type(fishData) == "userdata" then
+            local rarityValue = fishData:FindFirstChild("Rarity")
+            if rarityValue then
+                rarity = tostring(rarityValue.Value)
+                FishRarityDatabase[fishName] = rarity
+                return rarity
+            end
+        end
+    end
+    
+    -- Priority 2: Check database
+    if FishRarityDatabase[fishName] then
+        return FishRarityDatabase[fishName]
+    end
+    
+    -- Priority 3: Try to find in ReplicatedStorage
+    pcall(function()
+        local storage = ReplicatedStorage:FindFirstChild("FishData") or 
+                       ReplicatedStorage:FindFirstChild("Fish")
+        
+        if storage then
+            local fishInfo = storage:FindFirstChild(fishName)
+            if fishInfo then
+                local rarityValue = fishInfo:FindFirstChild("Rarity")
+                if rarityValue then
+                    rarity = tostring(rarityValue.Value)
+                    FishRarityDatabase[fishName] = rarity
+                end
+            end
+        end
+    end)
+    
+    -- Priority 4: Check player inventory for this fish
+    pcall(function()
+        local dataFolder = ReplicatedStorage:FindFirstChild("PlayerData")
+        if dataFolder then
+            local profile = dataFolder:FindFirstChild(player.UserId)
+            if profile then
+                local inv = profile:FindFirstChild("Inventory")
+                if inv then
+                    for _, fish in ipairs(inv:GetChildren()) do
+                        if fish.Name == fishName or fish.Name:find(fishName) then
+                            local rarityValue = fish:FindFirstChild("Rarity")
+                            if rarityValue then
+                                rarity = tostring(rarityValue.Value)
+                                FishRarityDatabase[fishName] = rarity
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    
+    return rarity
+end
+
+----------------------------------------------------------------------
+-- 👑 Player Info
+----------------------------------------------------------------------
+local function getPlayerData()
+    local dataFolder = ReplicatedStorage:FindFirstChild("PlayerData")
+    if not dataFolder then return {} end
+
+    local profile = dataFolder:FindFirstChild(player.UserId)
+    if not profile then return {} end
+
+    local data = {}
+
+    -- Coins
+    data.Coins = profile:FindFirstChild("Coins") and profile.Coins.Value or 0
+
+    -- Current Rod
+    data.Rod = profile:FindFirstChild("EquippedRod") and profile.EquippedRod.Value or "Unknown"
+
+    -- Current Bait
+    data.Bait = profile:FindFirstChild("EquippedBait") and profile.EquippedBait.Value or "None"
+
+    -- Total Fish in Inventory
+    local inv = profile:FindFirstChild("Inventory")
+    local fishCount = 0
+    if inv then
+        for _, item in ipairs(inv:GetChildren()) do
+            fishCount += 1
+        end
+    end
+    data.FishCount = fishCount
+    
+    return data
+end
+
+local function updateStats()
+    local pdata = getPlayerData()
+    stats.rodName = pdata.Rod
+    stats.currentCoin = tostring(pdata.Coins)
+    stats.currentLocation = getPlayerLocation()
+    
+    -- Count rarity in backpack
+    local dataFolder = ReplicatedStorage:FindFirstChild("PlayerData")
+    if dataFolder then
+        local profile = dataFolder:FindFirstChild(player.UserId)
+        if profile then
+            local inv = profile:FindFirstChild("Inventory")
+            if inv then
+                -- Reset counts
+                for k in pairs(stats.rarityInBackpack) do
+                    stats.rarityInBackpack[k] = 0
+                end
+                
+                -- Count each fish's rarity
+                for _, item in ipairs(inv:GetChildren()) do
+                    local rarity = item:FindFirstChild("Rarity")
+                    if rarity then
+                        local rarityValue = tostring(rarity.Value)
+                        if stats.rarityInBackpack[rarityValue] then
+                            stats.rarityInBackpack[rarityValue] = stats.rarityInBackpack[rarityValue] + 1
+                        end
+                    else
+                        -- Try to get from database
+                        local itemRarity = getRealTimeFishRarity(item.Name, item)
+                        if stats.rarityInBackpack[itemRarity] then
+                            stats.rarityInBackpack[itemRarity] = stats.rarityInBackpack[itemRarity] + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+----------------------------------------------------------------------
+-- 🎣 Rarity System
+----------------------------------------------------------------------
+local rarityEmojis = {
+    Common    = "⚪",
+    Uncommon  = "🟢",
+    Rare      = "🔵",
+    Epic      = "🟣",
+    Legendary = "🟠",
+    Mythic    = "🔴",
+    SECRET    = "⭐"
+}
+
+----------------------------------------------------------------------
+-- 🔍 Data Extraction
+----------------------------------------------------------------------
+local function extractFishDataFromTable(data)
+    if type(data) ~= "table" then return nil end
+    
+    local fishData = {}
+    
+    local keyMappings = {
+        name = {"name", "Name", "fishName", "FishName", "fish", "Fish"},
+        rarity = {"rarity", "Rarity", "tier", "Tier"},
+        weight = {"weight", "Weight", "size", "Size"},
+        price = {"price", "Price", "value", "Value", "worth"},
+        mutations = {"mutations", "Mutations", "traits", "Traits"}
+    }
+    
+    for field, possibleKeys in pairs(keyMappings) do
+        for _, key in ipairs(possibleKeys) do
+            if data[key] then
+                fishData[field] = data[key]
+                break
+            end
+        end
+    end
+    
+    if fishData.name then
+        return fishData
+    end
+    
+    return nil
+end
+
+local function normalizeFishData(fishName, weightOrData)
+    local fishData = {}
+    
+    if type(weightOrData) == "table" then
+        local extracted = extractFishDataFromTable(weightOrData)
+        if extracted then
+            fishData.name = extracted.name or fishName
+            fishData.weight = extracted.weight or 0
+            fishData.rarity = extracted.rarity
+            fishData.price = extracted.price or 0
+            fishData.mutations = extracted.mutations or "None"
+        else
+            fishData.name = fishName
+            fishData.weight = weightOrData.Weight or weightOrData.weight or 0
+            fishData.price = 0
+            fishData.mutations = "None"
+        end
+    else
+        fishData.name = fishName
+        fishData.weight = weightOrData or 0
+        fishData.price = 0
+        fishData.mutations = "None"
+    end
+    
+    -- Get real-time rarity if not found
+    if not fishData.rarity then
+        fishData.rarity = getRealTimeFishRarity(fishData.name, weightOrData)
+    end
+    
+    return fishData
+end
+
+----------------------------------------------------------------------
+-- 📩 Webhook Functions
+----------------------------------------------------------------------
+local function sendWebhook(content, embeds)
+    local requestFunc = syn and syn.request or request or http_request
+    if not requestFunc then
+        debugPrint("❌ HTTP function unavailable")
         return false
     end
 
-    local data = { ["embeds"] = {embed} }
-    local jsonData = HttpService:JSONEncode(data)
-    
+    local payload = {
+        content = content,
+        embeds = embeds
+    }
+
     local success, result = pcall(function()
         return requestFunc({
             Url = WEBHOOK_URL,
             Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = jsonData
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(payload)
         })
     end)
     
-    if not success then
-        notify('WEBHOOK GAGAL KIRIM', 'Gagal kirim ke Proxy! Cek koneksi.', false)
+    if success and result and (result.StatusCode == 200 or result.StatusCode == 204) then
+        debugPrint("✅ Webhook sent successfully")
+        return true
+    else
+        debugPrint("❌ Webhook failed:", result and result.StatusCode or "Error")
+        return false
     end
-    return success
 end
 
--- FUNGSI: Test Webhook (untuk UI)
-local function testWebhook()
-    local embed = { 
-        ["title"] = "🧪 Webhook Test (Manual)", 
-        ["description"] = "Test message dari Fish Detector! Cek Discord Anda!", 
-        ["color"] = 65280, 
-        ["fields"] = { 
-            { ["name"] = "Player", ["value"] = player.Name, ["inline"] = true }, 
-            { ["name"] = "Status", ["value"] = "✅ Tes Manual", ["inline"] = true } 
-        }, 
-        ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ") 
+local function sendStatsUpdate()
+    updateStats()
+    
+    local rarityText = ""
+    for _, rarity in ipairs({"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "SECRET"}) do
+        local count = stats.rarityInBackpack[rarity]
+        rarityText = rarityText .. string.format("%s : %d\n", rarity, count)
+    end
+    
+    local totalInBackpack = string.format("%d/%d", stats.totalFishCaught, 4500)
+    
+    local embed = {
+        title = "🟢 BOT SCRIPT STATS 🟢",
+        color = 3066993,
+        fields = {
+            {
+                name = "⏱ Uptime",
+                value = getUptime(),
+                inline = true
+            },
+            {
+                name = "🤖 Bot Name",
+                value = stats.botName,
+                inline = true
+            },
+            {
+                name = "📍 Current Location",
+                value = stats.currentLocation,
+                inline = true
+            },
+            {
+                name = "🎣 Rod Name",
+                value = stats.rodName,
+                inline = true
+            },
+            {
+                name = "💰 Current Coin",
+                value = stats.currentCoin,
+                inline = true
+            },
+            {
+                name = "📦 Coin in Backpack",
+                value = "N/A",
+                inline = true
+            },
+            {
+                name = "🐟 Total Task in Backpack",
+                value = totalInBackpack,
+                inline = false
+            },
+            {
+                name = "📊 Rarity in Backpack",
+                value = "```\n" .. rarityText .. "```",
+                inline = false
+            }
+        },
+        footer = {
+            text = "Beck Script v0.8 | " .. os.date("%X")
+        }
     }
-    local success = sendWebhook(embed)
-    if success then
-        notify('WEBHOOK SUKSES KIRIM', 'Data uji coba terkirim ke Pipedream.', true)
-    end
-    return success
+    
+    sendWebhook(nil, {embed})
 end
 
--- FUNGSI: Monitor Chat (Inti deteksi ikan)
-local function monitorChat()
-    local chatEvents = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
-    if chatEvents then
-        local onMessageDoneFiltering = chatEvents:FindFirstChild("OnMessageDoneFiltering")
-        if onMessageDoneFiltering then
-            onMessageDoneFiltering.OnClientEvent:Connect(function(messageData)
-                local message = messageData.Message
-                if message:find("You Got:") or message:find("You got:") then
-                    task.wait(1.5) 
-                    local fishName = message:match("You [Gg]ot:%s*(.-)%s*%(") or message:match("You [Gg]ot:%s*(.-)%s*,") or "Unknown Fish"
-                    local rarity = "Common"
-                    for r, _ in pairs(rarityPriority) do
-                        if message:lower():find(r:lower()) then rarity = r; break end
-                    end
+local function sendBatchCatches()
+    if #fishBuffer == 0 then return end
+    
+    local description = ""
+    
+    for i, fish in ipairs(fishBuffer) do
+        local emoji = rarityEmojis[fish.rarity] or "🟢"
+        local mutationText = fish.mutations ~= "None" and fish.mutations or "None"
+        local priceText = fish.price > 0 and tostring(fish.price) or "96"
+        
+        description = description .. string.format(
+            "%s **You Got: %s (weight: %.2f KG, mutations: %s, price: %s coins)** at %s\n\n",
+            emoji,
+            fish.name,
+            fish.weight,
+            mutationText,
+            priceText,
+            fish.timestamp
+        )
+        
+        if #description > 3500 then break end
+    end
+    
+    local content = description
+    
+    sendWebhook(content, nil)
+    fishBuffer = {}
+    debugPrint("📤 Batch sent and buffer cleared")
+end
 
-                    if rarityPriority[rarity] >= rarityPriority[MIN_RARITY_TO_SEND] then
-                        local embed = {
-                            -- ... (kode embed lengkap untuk ikan tertangkap) ...
-                            ["title"] = "🎣 Fish Caught! (" .. rarity .. ")",
-                            ["description"] = string.format("**%s** telah tertangkap.", fishName),
-                            ["color"] = rarityColors[rarity] or 16777215,
-                            ["footer"] = { ["text"] = player.Name .. " • Fish It Detector" },
-                            ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ")
-                        }
-                        local success = sendWebhook(embed)
-                        if success then
-                            notify('IKAN TERTANGKAP', fishName .. " (" .. rarity .. ") dikirim ke Discord!", true)
+----------------------------------------------------------------------
+-- 🎣 Process Fish Catch
+----------------------------------------------------------------------
+local function processFishCatch(fishName, weightOrData)
+    local fishData = normalizeFishData(fishName, weightOrData)
+    
+    local fishId = tostring(fishData.name) .. "_" .. tostring(fishData.weight) .. "_" .. os.time()
+    if processedFishIds[fishId] then
+        debugPrint("⏭️ Duplicate fish, skipping")
+        return
+    end
+    processedFishIds[fishId] = true
+    
+    stats.totalFishCaught = stats.totalFishCaught + 1
+    stats.rarityInBackpack[fishData.rarity] = (stats.rarityInBackpack[fishData.rarity] or 0) + 1
+    
+    fishData.timestamp = os.date("%b, %d | %I:%M %p", os.time())
+    table.insert(fishBuffer, fishData)
+    
+    debugPrint("🎣 Fish caught:", fishData.name, "-", fishData.rarity, "-", fishData.weight .. "kg", "@ ", stats.currentLocation)
+    notify('🎣 FISH CAUGHT!', fishData.name .. " (" .. fishData.rarity .. ")", true)
+    
+    if #fishBuffer >= BATCH_SIZE then
+        sendBatchCatches()
+    end
+end
+
+----------------------------------------------------------------------
+-- 🎯 Hook RemoteEvents
+----------------------------------------------------------------------
+local function hookRemotes()
+    debugPrint("🔍 Hooking RemoteEvents...")
+    
+    local hookedCount = 0
+    
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if obj:IsA("RemoteEvent") then
+            pcall(function()
+                obj.OnClientEvent:Connect(function(...)
+                    local args = {...}
+                    
+                    if type(args[1]) == "string" and args[2] then
+                        debugPrint("📨 Possible fish:", args[1])
+                        processFishCatch(args[1], args[2])
+                        return
+                    end
+                    
+                    for _, arg in ipairs(args) do
+                        if type(arg) == "table" then
+                            local fishData = extractFishDataFromTable(arg)
+                            if fishData then
+                                processFishCatch(fishData.name, arg)
+                                return
+                            end
                         end
                     end
-                end
+                end)
+                hookedCount = hookedCount + 1
             end)
         end
     end
-end
-
--- FUNGSI UI: Membuat Antarmuka Sederhana
-local function createUI()
-    local playerGui = player:WaitForChild("PlayerGui")
     
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "FishDetectorUI"
-    gui.ResetOnSpawn = false
-    gui.Parent = playerGui
-
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 300, 0, 150)
-    mainFrame.Position = UDim2.fromScale(0.5, 0.5) -- Tengah layar
-    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Parent = gui
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 30)
-    title.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.Text = "FISH WEBHOOK CONFIG"
-    title.Font = Enum.Font.SourceSansBold
-    title.TextSize = 20
-    title.Parent = mainFrame
-
-    local urlBox = Instance.new("TextBox")
-    urlBox.Size = UDim2.new(0.9, 0, 0, 30)
-    urlBox.Position = UDim2.new(0.05, 0, 0.3, 0)
-    urlBox.PlaceholderText = "Masukkan URL Proxy Pipedream..."
-    urlBox.Text = WEBHOOK_URL 
-    urlBox.TextColor3 = Color3.fromRGB(0, 0, 0)
-    urlBox.TextSize = 14
-    urlBox.Parent = mainFrame
+    debugPrint("✅ Hooked " .. hookedCount .. " RemoteEvents")
     
-    -- Event untuk mengupdate URL saat pengguna mengetik
-    urlBox.Changed:Connect(function(property)
-        if property == "Text" then
-            WEBHOOK_URL = urlBox.Text
+    ReplicatedStorage.DescendantAdded:Connect(function(obj)
+        if obj:IsA("RemoteEvent") then
+            pcall(function()
+                obj.OnClientEvent:Connect(function(...)
+                    local args = {...}
+                    for _, arg in ipairs(args) do
+                        if type(arg) == "table" then
+                            local fishData = extractFishDataFromTable(arg)
+                            if fishData then
+                                processFishCatch(fishData.name, arg)
+                            end
+                        end
+                    end
+                end)
+            end)
         end
-    end)
-    
-    local testButton = Instance.new("TextButton")
-    testButton.Size = UDim2.new(0.4, 0, 0, 30)
-    testButton.Position = UDim2.new(0.05, 0, 0.6, 0)
-    testButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
-    testButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    testButton.Text = "TEST WEBHOOK"
-    testButton.Font = Enum.Font.SourceSansBold
-    testButton.TextSize = 16
-    testButton.Parent = mainFrame
-
-    -- Event untuk menguji webhook
-    testButton.MouseButton1Click:Connect(function()
-        if testWebhook() then
-            testButton.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
-            task.wait(1)
-            testButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
-        else
-            testButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-            task.wait(1)
-            testButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
-        end
-    end)
-
-    local rarityButton = Instance.new("TextButton")
-    rarityButton.Size = UDim2.new(0.4, 0, 0, 30)
-    rarityButton.Position = UDim2.new(0.55, 0, 0.6, 0)
-    rarityButton.BackgroundColor3 = Color3.fromRGB(0, 0, 150)
-    rarityButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    rarityButton.Text = "Rarity: " .. MIN_RARITY_TO_SEND
-    rarityButton.Font = Enum.Font.SourceSansBold
-    rarityButton.TextSize = 16
-    rarityButton.Parent = mainFrame
-    
-    -- Fungsi untuk mengganti rarity
-    local rarityIndex = rarityPriority[MIN_RARITY_TO_SEND]
-    local rarityList = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "SECRET"}
-    
-    rarityButton.MouseButton1Click:Connect(function()
-        rarityIndex = rarityIndex % #rarityList + 1
-        MIN_RARITY_TO_SEND = rarityList[rarityIndex]
-        rarityButton.Text = "Rarity: " .. MIN_RARITY_TO_SEND
-        notify("SETTING", "Minimum Rarity diatur ke: " .. MIN_RARITY_TO_SEND, true)
     end)
 end
 
--- Inisialisasi
-pcall(createUI)
-pcall(monitorChat)
+----------------------------------------------------------------------
+-- 🚀 Initialize
+----------------------------------------------------------------------
+notify('🚀 LOADING', 'Fish Detector v3.0 - Real-Time', true)
+debugPrint("====== FISH DETECTOR v3.0 - REAL-TIME DATA ======")
 
-notify('NIGHTMARE LOADER', 'Fish Detector Loaded. Cari kotak CONFIG di layar.', true)
+-- Build fish database
+task.spawn(function()
+    task.wait(2)
+    buildFishRarityDatabase()
+end)
+
+-- Test webhook
+task.spawn(function()
+    task.wait(3)
+    sendStatsUpdate()
+end)
+
+-- Start hooking
+task.spawn(function()
+    task.wait(4)
+    hookRemotes()
+    notify('✅ ACTIVE', 'Real-time monitoring active!', true)
+end)
+
+-- Periodic updates
+task.spawn(function()
+    while true do
+        task.wait(SEND_INTERVAL)
+        sendStatsUpdate()
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(SEND_INTERVAL / 2)
+        if #fishBuffer > 0 then
+            sendBatchCatches()
+        end
+    end
+end)
+
+-- Manual commands
+_G.sendStats = function()
+    sendStatsUpdate()
+end
+
+_G.sendBatch = function()
+    sendBatchCatches()
+end
+
+_G.testFish = function()
+    processFishCatch("Test Salmon", 5.2)
+end
+
+_G.checkLocation = function()
+    print("Current Location:", getPlayerLocation())
+end
+
+_G.rebuildDB = function()
+    buildFishRarityDatabase()
+end
+
+debugPrint("✅ Script loaded!")
+debugPrint("💡 Commands:")
+debugPrint("   _G.sendStats() - Send stats")
+debugPrint("   _G.checkLocation() - Check location")
+debugPrint("   _G.rebuildDB() - Rebuild fish database")
+print("====== PRESS F9 FOR DEBUG LOG ======")
