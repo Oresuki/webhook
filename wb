@@ -1,14 +1,16 @@
--- Fish It Game Detector Script (Delta Executor Compatible - Simplified HTTP)
--- Mendeteksi ikan tertangkap, isi backpack, dan rarity items
--- Dengan Discord Webhook Integration
+-- Fish It Game Detector Script (V. Akhir - Menggunakan Proxy)
+-- Dirancang untuk mengatasi pemblokiran HTTP oleh Anticheat/Executor.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
 
--- URL WEBHOOK ANDA (URL telah dikonfirmasi dan dimasukkan)
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1415137396290224239/ubcezXBLeK03AhRtLcLQcq-dI2j1PGwa3QREOOIQTAY4ZazFFcgI2nuQBQRTc9DzP97A"
+-- URL PROXY PIPEDREAM ANDA SUDAH DIMASUKKAN DI SINI:
+local WEBHOOK_URL = "https://eoul4wwmel3tjko.m.pipedream.net" 
+
+-- PENTING: Pastikan Anda sudah mengatur alur kerja (workflow) di Pipedream
+-- agar ia meneruskan data yang diterima ke URL Webhook Discord Anda yang ASLI.
 
 -- Settings
 local SEND_ALL_CATCHES = false -- Set true untuk kirim semua catch, false untuk rare saja
@@ -16,27 +18,17 @@ local MIN_RARITY_TO_SEND = "Rare" -- Minimum rarity untuk kirim ke Discord
 
 -- Tabel rarity colors untuk Discord embed
 local rarityColors = {
-    Common = 16777215,      -- White
-    Uncommon = 5635925,     -- Green
-    Rare = 5592575,         -- Blue
-    Epic = 11141375,        -- Purple
-    Legendary = 16755200,   -- Orange/Gold
-    Mythic = 16733695,      -- Pink/Magenta
-    SECRET = 16711680       -- Red
+    Common = 16777215, Uncommon = 5635925, Rare = 5592575, 
+    Epic = 11141375, Legendary = 16755200, Mythic = 16733695, 
+    SECRET = 16711680 
 }
 
--- Tabel priority rarity (untuk filter)
+-- Tabel priority rarity
 local rarityPriority = {
-    Common = 1,
-    Uncommon = 2,
-    Rare = 3,
-    Epic = 4,
-    Legendary = 5,
-    Mythic = 6,
-    SECRET = 7
+    Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Mythic = 6, SECRET = 7
 }
 
--- Function untuk send webhook ke Discord (Disederhanakan untuk kompatibilitas lebih baik)
+-- Function untuk send webhook ke Proxy (Disederhanakan untuk kompatibilitas Delta)
 local function sendWebhook(embed)
     if not WEBHOOK_URL then
         warn("❌ Discord Webhook URL not configured!")
@@ -49,9 +41,9 @@ local function sendWebhook(embed)
     
     local jsonData = HttpService:JSONEncode(data)
     
-    -- Mencoba http_request atau request secara langsung (lebih sederhana dari pcall)
     local success, result
     
+    -- Mencoba fungsi HTTP yang umum: http_request, request, syn.request
     if http_request then
         success, result = pcall(function()
             return http_request({
@@ -80,189 +72,135 @@ local function sendWebhook(embed)
             })
         end)
     else
-        warn("❌ No HTTP request function available (Delta/Roblox API is not exposed).")
+        warn("❌ No HTTP request function available (Ganti Executor jika ini muncul).")
         return false
     end
     
-    if success and result and (result.StatusCode == 204 or result.Success) then
-        print("✅ Webhook sent to Discord!")
+    if success and result then
+        print("✅ Webhook data sent to Proxy (Pipedream)!")
         return true
-    elseif success then
-        -- Webhook failed but request succeeded (e.g., Discord returned error code)
-        warn("❌ Failed to send webhook (Discord error): " .. tostring(result.StatusCode or "Unknown Status"))
-        return false
     else
-        warn("❌ Failed to execute HTTP request: " .. tostring(result))
+        warn("❌ Failed to send data to Proxy: " .. tostring(result))
         return false
     end
 end
 
--- Function untuk parse backpack dari GUI
+-- Function untuk parse backpack dari GUI (Penting agar data backpack terkirim)
 local function parseBackpackFromGUI()
-    local backpackData = {
-        items = {},
-        totalWeight = 0,
-        maxWeight = 4500,
-        rarityCounts = {
-            Common = 0, Uncommon = 0, Rare = 0, Epic = 0, Legendary = 0, Mythic = 0, SECRET = 0
-        }
-    }
-    
-    local playerGui = player:WaitForChild("PlayerGui", 5)
-    if not playerGui then return backpackData end
-    
-    for _, gui in pairs(playerGui:GetDescendants()) do
-        if gui:IsA("TextLabel") or gui:IsA("TextBox") then
-            local text = gui.Text
-            
-            -- Parse weight (format: "X.XXX/X.XXX")
-            local current, max = text:match("(%d+%.%d+)/(%d+%.%d+)")
-            if current and max then
-                backpackData.totalWeight = tonumber(current) * 1000
-                backpackData.maxWeight = tonumber(max) * 1000
-            end
-            
-            -- Parse rarity counts (Cari 'Rarity: X' atau 'Rarity X')
-            for rarity, _ in pairs(rarityPriority) do
-                local count = text:match(rarity .. "%s*:%s*(%d+)") or text:match(rarity .. "%s*(%d+)")
-                if count then
-                    backpackData.rarityCounts[rarity] = tonumber(count)
-                end
-            end
-        end
-    end
-    
-    return backpackData
+    local backpackData = { items = {}, totalWeight = 0, maxWeight = 4500, rarityCounts = { Common = 0, Uncommon = 0, Rare = 0, Epic = 0, Legendary = 0, Mythic = 0, SECRET = 0 } }
+    local playerGui = player:WaitForChild("PlayerGui", 5)
+    if not playerGui then return backpackData end
+    for _, gui in pairs(playerGui:GetDescendants()) do
+        if gui:IsA("TextLabel") or gui:IsA("TextBox") then
+            local text = gui.Text
+            local current, max = text:match("(%d+%.%d+)/(%d+%.%d+)")
+            if current and max then
+                backpackData.totalWeight = tonumber(current) * 1000
+                backpackData.maxWeight = tonumber(max) * 1000
+            end
+            for rarity, _ in pairs(rarityPriority) do
+                local count = text:match(rarity .. "%s*:%s*(%d+)") or text:match(rarity .. "%s*(%d+)")
+                if count then backpackData.rarityCounts[rarity] = tonumber(count) end
+            end
+        end
+    end
+    return backpackData
 end
-
--- Fungsi shouldSendToDiscord dan printBackpackStatus tidak diubah karena sudah benar...
 
 local function shouldSendToDiscord(rarity)
-    if SEND_ALL_CATCHES then
-        return true
-    end
-    local minPriority = rarityPriority[MIN_RARITY_TO_SEND] or 3
-    local itemPriority = rarityPriority[rarity] or 1
-    return itemPriority >= minPriority
+    if SEND_ALL_CATCHES then return true end
+    local minPriority = rarityPriority[MIN_RARITY_TO_SEND] or 3
+    local itemPriority = rarityPriority[rarity] or 1
+    return itemPriority >= minPriority
 end
 
 local function printBackpackStatus()
-    local data = parseBackpackFromGUI()
-    print("━━━━━━━━━━━━━━━━━━━━━━━")
-    print("📦 BACKPACK STATUS")
-    print("━━━━━━━━━━━━━━━━━━━━━━━")
-    print(string.format("⚖️ Weight: %.3f/%.3f KG (%.1f%%)", data.totalWeight/1000, data.maxWeight/1000, (data.totalWeight/data.maxWeight) * 100))
-    print("\n✨ Rarity Breakdown:")
-    for rarity, count in pairs(data.rarityCounts) do
-        if count > 0 then
-            print(string.format("  %s: %d", rarity, count))
-        end
-    end
-    print("━━━━━━━━━━━━━━━━━━━━━━━\n")
+    local data = parseBackpackFromGUI()
+    print("━━━━━━━━━━━━━━━━━━━━━━━")
+    print("📦 BACKPACK STATUS")
+    print("━━━━━━━━━━━━━━━━━━━━━━━")
+    print(string.format("⚖️ Weight: %.3f/%.3f KG (%.1f%%)", data.totalWeight/1000, data.maxWeight/1000, (data.totalWeight/data.maxWeight) * 100))
+    print("\n✨ Rarity Breakdown:")
+    for rarity, count in pairs(data.rarityCounts) do
+        if count > 0 then print(string.format("  %s: %d", rarity, count)) end
+    end
+    print("━━━━━━━━━━━━━━━━━━━━━━━\n")
 end
 
 -- Monitor chat untuk fish caught messages
 local function monitorChat()
-    local chatEvents = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
-    if chatEvents then
-        local onMessageDoneFiltering = chatEvents:FindFirstChild("OnMessageDoneFiltering")
-        if onMessageDoneFiltering then
-            onMessageDoneFiltering.OnClientEvent:Connect(function(messageData)
-                local message = messageData.Message
-                
-                if message:find("You Got:") or message:find("You got:") then
-                    task.wait(1.5) -- Ditingkatkan untuk stabilitas
-                    
-                    local fishName = message:match("You [Gg]ot:%s*(.-)%s*%(") or message:match("You [Gg]ot:%s*(.-)%s*,") or "Unknown Fish"
-                    local weight = message:match("weight:%s*([%d%.]+)") or "0"
-                    local price = message:match("price:%s*(%d+)") or "0"
-                    local mutations = message:match("mutations:%s*([^,%)]+)") or "None"
-                    
-                    local rarity = "Common"
-                    for r, _ in pairs(rarityPriority) do
-                        if message:lower():find(r:lower()) then
-                            rarity = r
-                            break
-                        end
-                    end
-                    
-                    print("━━━━━━━━━━━━━━━━━━━━━━━")
-                    print("🎣 FISH CAUGHT!")
-                    print("━━━━━━━━━━━━━━━━━━━━━━━")
-                    print("🐟 Fish: " .. fishName)
-                    print("✨ Rarity: " .. rarity)
-                    print("━━━━━━━━━━━━━━━━━━━━━━━\n")
-                    
-                    task.wait(1)
-                    printBackpackStatus()
-                    
-                    if shouldSendToDiscord(rarity) then
-                        local bpData = parseBackpackFromGUI()
-                        local rarityText = ""
-                        
-                        for r, count in pairs(bpData.rarityCounts) do
-                            if count > 0 then
-                                rarityText = rarityText .. string.format("%s: %d\n", r, count)
-                            end
-                        end
-                        
-                        local embed = {
-                            ["title"] = "🎣 Fish Caught!",
-                            ["description"] = string.format("**%s** has been caught!", fishName),
-                            ["color"] = rarityColors[rarity] or 16777215,
-                            ["fields"] = {
-                                { ["name"] = "📊 Fish Info", ["value"] = string.format("**Rarity:** %s\n**Weight:** %s KG\n**Price:** %s coins\n**Mutations:** %s", rarity, weight, price, mutations), ["inline"] = true },
-                                { ["name"] = "🎒 Backpack", ["value"] = string.format("**Weight:** %.2f/%.2f KG\n**Usage:** %.1f%%", bpData.totalWeight/1000, bpData.maxWeight/1000, (bpData.totalWeight/bpData.maxWeight) * 100), ["inline"] = true },
-                                { ["name"] = "✨ Rarity Count", ["value"] = rarityText ~= "" and rarityText or "No items", ["inline"] = false }
-                            },
-                            ["footer"] = { ["text"] = player.Name .. " • Fish It Detector" },
-                            ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ")
-                        }
-                        
-                        sendWebhook(embed)
-                    end
-                end
-            end)
-        end
-    end
+    local chatEvents = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+    if chatEvents then
+        local onMessageDoneFiltering = chatEvents:FindFirstChild("OnMessageDoneFiltering")
+        if onMessageDoneFiltering then
+            onMessageDoneFiltering.OnClientEvent:Connect(function(messageData)
+                local message = messageData.Message
+                if message:find("You Got:") or message:find("You got:") then
+                    task.wait(1.5) -- Waktu tunggu untuk update data
+                    local fishName = message:match("You [Gg]ot:%s*(.-)%s*%(") or message:match("You [Gg]ot:%s*(.-)%s*,") or "Unknown Fish"
+                    local weight = message:match("weight:%s*([%d%.]+)") or "0"
+                    local price = message:match("price:%s*(%d+)") or "0"
+                    local mutations = message:match("mutations:%s*([^,%)]+)") or "None"
+                    local rarity = "Common"
+                    for r, _ in pairs(rarityPriority) do
+                        if message:lower():find(r:lower()) then rarity = r; break end
+                    end
+                    print("━━━━━━━━━━━━━━━━━━━━━━━")
+                    print("🎣 FISH CAUGHT!")
+                    print("━━━━━━━━━━━━━━━━━━━━━━━")
+                    print("🐟 Fish: " .. fishName)
+                    print("✨ Rarity: " .. rarity)
+                    print("━━━━━━━━━━━━━━━━━━━━━━━\n")
+                    task.wait(1)
+                    printBackpackStatus()
+                    if shouldSendToDiscord(rarity) then
+                        local bpData = parseBackpackFromGUI()
+                        local rarityText = ""
+                        for r, count in pairs(bpData.rarityCounts) do
+                            if count > 0 then rarityText = rarityText .. string.format("%s: %d\n", r, count) end
+                        end
+                        local embed = {
+                            ["title"] = "🎣 Fish Caught!",
+                            ["description"] = string.format("**%s** has been caught!", fishName),
+                            ["color"] = rarityColors[rarity] or 16777215,
+                            ["fields"] = {
+                                { ["name"] = "📊 Fish Info", ["value"] = string.format("**Rarity:** %s\n**Weight:** %s KG\n**Price:** %s coins\n**Mutations:** %s", rarity, weight, price, mutations), ["inline"] = true },
+                                { ["name"] = "🎒 Backpack", ["value"] = string.format("**Weight:** %.2f/%.2f KG\n**Usage:** %.1f%%", bpData.totalWeight/1000, bpData.maxWeight/1000, (bpData.totalWeight/bpData.maxWeight) * 100), ["inline"] = true },
+                                { ["name"] = "✨ Rarity Count", ["value"] = rarityText ~= "" and rarityText or "No items", ["inline"] = false }
+                            },
+                            ["footer"] = { ["text"] = player.Name .. " • Fish It Detector" },
+                            ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                        }
+                        sendWebhook(embed)
+                    end
+                end
+            end)
+        end
+    end
 end
 
 -- Initialize
 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 print("🎣 Fish It Detector Script Loaded!")
 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-print("📱 Executor: Delta (Simplified HTTP)")
-print("🔗 Webhook: ✅ Configured")
+print("📱 Executor: Delta (Menggunakan Proxy)")
+print("🔗 Webhook: ✅ PROXY CONFIGURED")
+print("➡️ Proxy URL: " .. WEBHOOK_URL)
 print("📊 Min Rarity: " .. MIN_RARITY_TO_SEND)
 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
--- Commands (tidak diubah)
+-- Commands
 _G.FishDetector = {
     checkBackpack = printBackpackStatus,
     testWebhook = function()
-        local embed = {
-            ["title"] = "🧪 Webhook Test",
-            ["description"] = "Test message from Fish It Detector!",
-            ["color"] = 65280,
-            ["fields"] = {
-                { ["name"] = "Player", ["value"] = player.Name, ["inline"] = true },
-                { ["name"] = "Status", ["value"] = "✅ Connected", ["inline"] = true }
-            },
-            ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ")
-        }
+        local embed = { ["title"] = "🧪 Webhook Test (Via Proxy)", ["description"] = "Test message from Fish It Detector!", ["color"] = 65280, ["fields"] = { { ["name"] = "Player", ["value"] = player.Name, ["inline"] = true }, { ["name"] = "Status", ["value"] = "✅ Proxy Connected", ["inline"] = true } }, ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ") }
         sendWebhook(embed)
     end,
     setMinRarity = function(rarity)
-        if rarityPriority[rarity] then
-            MIN_RARITY_TO_SEND = rarity
-            print("✅ Minimum rarity set to: " .. rarity)
-        else
-            print("❌ Invalid rarity! Options: Common, Uncommon, Rare, Epic, Legendary, Mythic, SECRET")
-        end
+        if rarityPriority[rarity] then MIN_RARITY_TO_SEND = rarity; print("✅ Minimum rarity set to: " .. rarity) else print("❌ Invalid rarity! Options: Common, Uncommon, Rare, Epic, Legendary, Mythic, SECRET") end
     end,
     setSendAll = function(value)
-        SEND_ALL_CATCHES = value
-        print("✅ Send all catches: " .. tostring(value))
+        SEND_ALL_CATCHES = value; print("✅ Send all catches: " .. tostring(value))
     end
 }
 
