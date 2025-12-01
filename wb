@@ -1,0 +1,371 @@
+-- Fish It Game Detector Script (Delta Executor Compatible)
+-- Mendeteksi ikan tertangkap, isi backpack, dan rarity items
+-- Dengan Discord Webhook Integration
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local player = Players.LocalPlayer
+
+-- GANTI INI DENGAN WEBHOOK URL DISCORD KAMU
+local WEBHOOK_URL = "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+
+-- Settings
+local SEND_ALL_CATCHES = false -- Set true untuk kirim semua catch, false untuk rare saja
+local MIN_RARITY_TO_SEND = "Rare" -- Minimum rarity untuk kirim ke Discord
+
+-- Tabel rarity colors untuk Discord embed
+local rarityColors = {
+    Common = 16777215,      -- White
+    Uncommon = 5635925,     -- Green
+    Rare = 5592575,         -- Blue
+    Epic = 11141375,        -- Purple
+    Legendary = 16755200,   -- Orange/Gold
+    Mythic = 16733695,      -- Pink/Magenta
+    SECRET = 16711680       -- Red
+}
+
+-- Tabel priority rarity (untuk filter)
+local rarityPriority = {
+    Common = 1,
+    Uncommon = 2,
+    Rare = 3,
+    Epic = 4,
+    Legendary = 5,
+    Mythic = 6,
+    SECRET = 7
+}
+
+-- Function untuk send webhook ke Discord (Delta Compatible)
+local function sendWebhook(embed)
+    if not WEBHOOK_URL or WEBHOOK_URL == "https://discord.com/api/webhooks/1415137396290224239/ubcezXBLeK03AhRtLcLQcq-dI2j1PGwa3QREOOIQTAY4ZazFFcgI2nuQBQRTc9DzP97A" then
+        warn("❌ Discord Webhook URL not configured!")
+        return false
+    end
+    
+    local data = {
+        ["embeds"] = {embed}
+    }
+    
+    local jsonData = HttpService:JSONEncode(data)
+    
+    -- Try multiple request methods for Delta compatibility
+    local success, result = pcall(function()
+        -- Method 1: http_request (most common in Delta)
+        if http_request then
+            return http_request({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json"
+                },
+                Body = jsonData
+            })
+        end
+        
+        -- Method 2: request
+        if request then
+            return request({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json"
+                },
+                Body = jsonData
+            })
+        end
+        
+        -- Method 3: syn.request (Synapse compatibility)
+        if syn and syn.request then
+            return syn.request({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json"
+                },
+                Body = jsonData
+            })
+        end
+        
+        error("No HTTP request function available")
+    end)
+    
+    if success then
+        print("✅ Webhook sent to Discord!")
+        return true
+    else
+        warn("❌ Failed to send webhook: " .. tostring(result))
+        return false
+    end
+end
+
+-- Function untuk mendapatkan data player
+local function getPlayerData()
+    -- Method 1: Check PlayerGui
+    if player:FindFirstChild("PlayerGui") then
+        local gui = player.PlayerGui
+        
+        -- Cari inventory GUI
+        for _, child in pairs(gui:GetDescendants()) do
+            if child.Name:lower():find("inventory") or child.Name:lower():find("backpack") then
+                return child
+            end
+        end
+    end
+    
+    -- Method 2: Check ReplicatedStorage
+    if ReplicatedStorage:FindFirstChild("PlayerData") then
+        return ReplicatedStorage.PlayerData
+    end
+    
+    -- Method 3: Check player directly
+    if player:FindFirstChild("Data") then
+        return player.Data
+    end
+    
+    return nil
+end
+
+-- Function untuk parse backpack dari GUI
+local function parseBackpackFromGUI()
+    local backpackData = {
+        items = {},
+        totalWeight = 0,
+        maxWeight = 4500,
+        rarityCounts = {
+            Common = 0,
+            Uncommon = 0,
+            Rare = 0,
+            Epic = 0,
+            Legendary = 0,
+            Mythic = 0,
+            SECRET = 0
+        }
+    }
+    
+    -- Cari inventory di PlayerGui
+    local playerGui = player:WaitForChild("PlayerGui", 5)
+    if not playerGui then return backpackData end
+    
+    for _, gui in pairs(playerGui:GetDescendants()) do
+        -- Cari text labels yang menunjukkan item atau stats
+        if gui:IsA("TextLabel") or gui:IsA("TextBox") then
+            local text = gui.Text
+            
+            -- Parse weight (format: "X.XXX/X.XXX")
+            if text:match("%d+%.%d+/%d+%.%d+") then
+                local current, max = text:match("(%d+%.%d+)/(%d+%.%d+)")
+                if current and max then
+                    backpackData.totalWeight = tonumber(current) * 1000
+                    backpackData.maxWeight = tonumber(max) * 1000
+                end
+            end
+            
+            -- Parse rarity counts
+            for rarity, _ in pairs(rarityPriority) do
+                if text:find(rarity) then
+                    local count = text:match(rarity .. "%s*:%s*(%d+)")
+                    if count then
+                        backpackData.rarityCounts[rarity] = tonumber(count)
+                    end
+                end
+            end
+        end
+    end
+    
+    return backpackData
+end
+
+-- Function untuk check apakah rarity cukup tinggi untuk dikirim
+local function shouldSendToDiscord(rarity)
+    if SEND_ALL_CATCHES then
+        return true
+    end
+    
+    local minPriority = rarityPriority[MIN_RARITY_TO_SEND] or 3
+    local itemPriority = rarityPriority[rarity] or 1
+    
+    return itemPriority >= minPriority
+end
+
+-- Function untuk print backpack status
+local function printBackpackStatus()
+    local data = parseBackpackFromGUI()
+    
+    print("━━━━━━━━━━━━━━━━━━━━━━━")
+    print("📦 BACKPACK STATUS")
+    print("━━━━━━━━━━━━━━━━━━━━━━━")
+    print(string.format("⚖️ Weight: %.3f/%.3f KG (%.1f%%)", 
+        data.totalWeight/1000, 
+        data.maxWeight/1000,
+        (data.totalWeight/data.maxWeight) * 100
+    ))
+    print("\n✨ Rarity Breakdown:")
+    
+    for rarity, count in pairs(data.rarityCounts) do
+        if count > 0 then
+            print(string.format("  %s: %d", rarity, count))
+        end
+    end
+    print("━━━━━━━━━━━━━━━━━━━━━━━\n")
+end
+
+-- Monitor chat untuk fish caught messages
+local function monitorChat()
+    local chatEvents = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+    if chatEvents then
+        local onMessageDoneFiltering = chatEvents:FindFirstChild("OnMessageDoneFiltering")
+        if onMessageDoneFiltering then
+            onMessageDoneFiltering.OnClientEvent:Connect(function(messageData)
+                local message = messageData.Message
+                
+                -- Parse fish caught message
+                -- Format contoh: "You Got: [Fish Name] (weight: X.XX KG, mutations: ..., price: X coins)"
+                if message:find("You Got:") or message:find("You got:") then
+                    task.wait(0.5)
+                    
+                    -- Extract info dari message
+                    local fishName = message:match("You [Gg]ot:%s*(.-)%s*%(") or message:match("You [Gg]ot:%s*(.-)%s*,") or "Unknown Fish"
+                    local weight = message:match("weight:%s*([%d%.]+)") or "0"
+                    local price = message:match("price:%s*(%d+)") or "0"
+                    local mutations = message:match("mutations:%s*([^,%)]+)") or "None"
+                    
+                    -- Tentukan rarity berdasarkan keywords dalam message
+                    local rarity = "Common"
+                    for r, _ in pairs(rarityPriority) do
+                        if message:lower():find(r:lower()) then
+                            rarity = r
+                            break
+                        end
+                    end
+                    
+                    print("━━━━━━━━━━━━━━━━━━━━━━━")
+                    print("🎣 FISH CAUGHT!")
+                    print("━━━━━━━━━━━━━━━━━━━━━━━")
+                    print("🐟 Fish: " .. fishName)
+                    print("⚖️ Weight: " .. weight .. " KG")
+                    print("✨ Rarity: " .. rarity)
+                    print("🧬 Mutations: " .. mutations)
+                    print("💰 Price: " .. price .. " coins")
+                    print("━━━━━━━━━━━━━━━━━━━━━━━\n")
+                    
+                    task.wait(1)
+                    printBackpackStatus()
+                    
+                    -- Send to Discord
+                    if shouldSendToDiscord(rarity) then
+                        local bpData = parseBackpackFromGUI()
+                        local rarityText = ""
+                        
+                        for r, count in pairs(bpData.rarityCounts) do
+                            if count > 0 then
+                                rarityText = rarityText .. string.format("%s: %d\n", r, count)
+                            end
+                        end
+                        
+                        local embed = {
+                            ["title"] = "🎣 Fish Caught!",
+                            ["description"] = string.format("**%s** has been caught!", fishName),
+                            ["color"] = rarityColors[rarity] or 16777215,
+                            ["fields"] = {
+                                {
+                                    ["name"] = "📊 Fish Info",
+                                    ["value"] = string.format(
+                                        "**Rarity:** %s\n**Weight:** %s KG\n**Price:** %s coins\n**Mutations:** %s",
+                                        rarity, weight, price, mutations
+                                    ),
+                                    ["inline"] = true
+                                },
+                                {
+                                    ["name"] = "🎒 Backpack",
+                                    ["value"] = string.format(
+                                        "**Weight:** %.2f/%.2f KG\n**Usage:** %.1f%%",
+                                        bpData.totalWeight/1000,
+                                        bpData.maxWeight/1000,
+                                        (bpData.totalWeight/bpData.maxWeight) * 100
+                                    ),
+                                    ["inline"] = true
+                                },
+                                {
+                                    ["name"] = "✨ Rarity Count",
+                                    ["value"] = rarityText ~= "" and rarityText or "No items",
+                                    ["inline"] = false
+                                }
+                            },
+                            ["footer"] = {
+                                ["text"] = player.Name .. " • Fish It Detector"
+                            },
+                            ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                        }
+                        
+                        sendWebhook(embed)
+                    end
+                end
+            end)
+        end
+    end
+end
+
+-- Initialize
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🎣 Fish It Detector Script Loaded!")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("📱 Executor: Delta")
+print("🔗 Webhook: " .. (WEBHOOK_URL ~= "https://discord.com/api/webhooks/1415137396290224239/ubcezXBLeK03AhRtLcLQcq-dI2j1PGwa3QREOOIQTAY4ZazFFcgI2nuQBQRTc9DzP97A" and "✅ Configured" or "❌ Not Configured"))
+print("📊 Min Rarity: " .. MIN_RARITY_TO_SEND)
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+-- Commands
+_G.FishDetector = {
+    checkBackpack = function()
+        printBackpackStatus()
+    end,
+    
+    testWebhook = function()
+        local embed = {
+            ["title"] = "🧪 Webhook Test",
+            ["description"] = "Test message from Fish It Detector!",
+            ["color"] = 65280,
+            ["fields"] = {
+                {
+                    ["name"] = "Player",
+                    ["value"] = player.Name,
+                    ["inline"] = true
+                },
+                {
+                    ["name"] = "Status",
+                    ["value"] = "✅ Connected",
+                    ["inline"] = true
+                }
+            },
+            ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }
+        sendWebhook(embed)
+    end,
+    
+    setMinRarity = function(rarity)
+        if rarityPriority[rarity] then
+            MIN_RARITY_TO_SEND = rarity
+            print("✅ Minimum rarity set to: " .. rarity)
+        else
+            print("❌ Invalid rarity! Options: Common, Uncommon, Rare, Epic, Legendary, Mythic, SECRET")
+        end
+    end,
+    
+    setSendAll = function(value)
+        SEND_ALL_CATCHES = value
+        print("✅ Send all catches: " .. tostring(value))
+    end
+}
+
+print("📝 Commands:")
+print("  _G.FishDetector.checkBackpack()")
+print("  _G.FishDetector.testWebhook()")
+print("  _G.FishDetector.setMinRarity('Epic')")
+print("  _G.FishDetector.setSendAll(true)")
+print("\n⏳ Monitoring for fish catches...\n")
+
+-- Start monitoring
+monitorChat()
+task.wait(1)
+printBackpackStatus()
