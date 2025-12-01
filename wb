@@ -1,5 +1,5 @@
--- Fish It Game Detector Script (V. Final - Notifikasi SetCore)
--- Menggunakan Proxy Pipedream + Notifikasi SetCore (seperti loader teman Anda) untuk feedback.
+-- Fish It Game Detector Script (V. Final - UI Manager)
+-- Menggunakan UI sederhana untuk memasukkan Webhook URL dan menampilkan status.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -7,14 +7,13 @@ local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
 local StarterGui = game:GetService('StarterGui')
 
--- URL PROXY PIPEDREAM ANDA SUDAH DIMASUKKAN DI SINI:
+-- Variabel URL Webhook (akan diisi dari UI)
 local WEBHOOK_URL = "https://eoul4wwmel3tjko.m.pipedream.net" 
 
 -- Settings
-local SEND_ALL_CATCHES = false 
 local MIN_RARITY_TO_SEND = "Rare" 
 
--- Tabel colors dan priority tetap sama
+-- [Kode Warna dan Prioritas Rarity tetap sama]
 local rarityColors = {
     Common = 16777215, Uncommon = 5635925, Rare = 5592575, 
     Epic = 11141375, Legendary = 16755200, Mythic = 16733695, 
@@ -24,9 +23,9 @@ local rarityPriority = {
     Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Mythic = 6, SECRET = 7
 }
 
--- FUNGSI BARU: Notifikasi Pop-up (Meniru SetCore dari Loader Anda)
+-- FUNGSI: Notifikasi Pop-up (menggunakan SetCore)
 local function notify(title, text, isSuccess)
-    local icon = isSuccess and 'rbxassetid://6253907742' or 'rbxassetid://6253907405' -- Ikon centang atau silang
+    local icon = isSuccess and 'rbxassetid://6253907742' or 'rbxassetid://6253907405'
     pcall(function()
         StarterGui:SetCore('SendNotification', {
             Title = title,
@@ -37,12 +36,12 @@ local function notify(title, text, isSuccess)
     end)
 end
 
--- Function untuk send webhook ke Proxy
+-- FUNGSI: sendWebhook (Inti komunikasi HTTP)
 local function sendWebhook(embed)
     local requestFunc = http_request or request or (syn and syn.request)
     
     if not WEBHOOK_URL or not requestFunc then
-        notify('WEBHOOK ERROR', 'Fungsi HTTP tidak ditemukan.', false)
+        notify('WEBHOOK ERROR', 'URL atau fungsi HTTP tidak ditemukan.', false)
         return false
     end
 
@@ -58,56 +57,32 @@ local function sendWebhook(embed)
         })
     end)
     
-    if success then
-        -- Jika sukses, Pipedream akan menerima (walaupun mungkin gagal di sisi Discord jika Body Pipedream salah)
-        return true
-    else
-        notify('WEBHOOK GAGAL KIRIM', 'Gagal kirim ke Proxy! Executor Anda mungkin memblokir jaringan.', false)
-        return false
+    if not success then
+        notify('WEBHOOK GAGAL KIRIM', 'Gagal kirim ke Proxy! Cek koneksi.', false)
     end
+    return success
 end
 
--- Fungsi untuk menguji webhook
+-- FUNGSI: Test Webhook (untuk UI)
 local function testWebhook()
     local embed = { 
-        ["title"] = "🧪 Webhook Test (Otomatis)", 
+        ["title"] = "🧪 Webhook Test (Manual)", 
         ["description"] = "Test message dari Fish Detector! Cek Discord Anda!", 
         ["color"] = 65280, 
         ["fields"] = { 
             { ["name"] = "Player", ["value"] = player.Name, ["inline"] = true }, 
-            { ["name"] = "Status", ["value"] = "✅ Tes Otomatis", ["inline"] = true } 
+            { ["name"] = "Status", ["value"] = "✅ Tes Manual", ["inline"] = true } 
         }, 
         ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ") 
     }
     local success = sendWebhook(embed)
     if success then
-        notify('WEBHOOK SUKSES KIRIM', 'Data uji coba terkirim ke Pipedream. Periksa Discord!', true)
+        notify('WEBHOOK SUKSES KIRIM', 'Data uji coba terkirim ke Pipedream.', true)
     end
     return success
 end
 
--- Fungsi pendukung lainnya (parseBackpackFromGUI, shouldSendToDiscord) tetap sama.
-local function parseBackpackFromGUI()
-    local backpackData = { items = {}, totalWeight = 0, maxWeight = 4500, rarityCounts = { Common = 0, Uncommon = 0, Rare = 0, Epic = 0, Legendary = 0, Mythic = 0, SECRET = 0 } }
-    local playerGui = player:WaitForChild("PlayerGui", 5)
-    if not playerGui then return backpackData end
-    for _, gui in pairs(playerGui:GetDescendants()) do
-        if gui:IsA("TextLabel") or gui:IsA("TextBox") then
-            local text = gui.Text
-            local current, max = text:match("(%d+%.%d+)/(%d+%.%d+)")
-            if current and max then
-                backpackData.totalWeight = tonumber(current) * 1000
-                backpackData.maxWeight = tonumber(max) * 1000
-            end
-            for rarity, _ in pairs(rarityPriority) do
-                local count = text:match(rarity .. "%s*:%s*(%d+)") or text:match(rarity .. "%s*(%d+)")
-                if count then backpackData.rarityCounts[rarity] = tonumber(count) end
-            end
-        end
-    end
-    return backpackData
-end
-
+-- FUNGSI: Monitor Chat (Inti deteksi ikan)
 local function monitorChat()
     local chatEvents = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
     if chatEvents then
@@ -123,20 +98,12 @@ local function monitorChat()
                         if message:lower():find(r:lower()) then rarity = r; break end
                     end
 
-                    if shouldSendToDiscord(rarity) then
-                        local bpData = parseBackpackFromGUI()
-                        local rarityText = ""
-                        for r, count in pairs(bpData.rarityCounts) do
-                            if count > 0 then rarityText = rarityText .. string.format("%s: %d\n", r, count) end
-                        end
+                    if rarityPriority[rarity] >= rarityPriority[MIN_RARITY_TO_SEND] then
                         local embed = {
+                            -- ... (kode embed lengkap untuk ikan tertangkap) ...
                             ["title"] = "🎣 Fish Caught! (" .. rarity .. ")",
                             ["description"] = string.format("**%s** telah tertangkap.", fishName),
                             ["color"] = rarityColors[rarity] or 16777215,
-                            ["fields"] = {
-                                { ["name"] = "🎒 Backpack", ["value"] = string.format("**Weight:** %.2f/%.2f KG", bpData.totalWeight/1000, bpData.maxWeight/1000), ["inline"] = true },
-                                { ["name"] = "✨ Rarity Count", ["value"] = rarityText ~= "" and rarityText or "No items", ["inline"] = false }
-                            },
                             ["footer"] = { ["text"] = player.Name .. " • Fish It Detector" },
                             ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ")
                         }
@@ -151,15 +118,95 @@ local function monitorChat()
     end
 end
 
--- Inisialisasi: Uji Coba Otomatis dan Mulai Monitoring
-task.spawn(function()
-    notify('NIGHTMARE LOADER', 'Fish Detector Loading...', true)
-    task.wait(5) -- Tunggu 5 detik agar semua dimuat
+-- FUNGSI UI: Membuat Antarmuka Sederhana
+local function createUI()
+    local playerGui = player:WaitForChild("PlayerGui")
     
-    -- UJI COBA OTOMATIS: Dapatkan feedback langsung
-    testWebhook()
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "FishDetectorUI"
+    gui.ResetOnSpawn = false
+    gui.Parent = playerGui
+
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Size = UDim2.new(0, 300, 0, 150)
+    mainFrame.Position = UDim2.fromScale(0.5, 0.5) -- Tengah layar
+    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Parent = gui
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Text = "FISH WEBHOOK CONFIG"
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 20
+    title.Parent = mainFrame
+
+    local urlBox = Instance.new("TextBox")
+    urlBox.Size = UDim2.new(0.9, 0, 0, 30)
+    urlBox.Position = UDim2.new(0.05, 0, 0.3, 0)
+    urlBox.PlaceholderText = "Masukkan URL Proxy Pipedream..."
+    urlBox.Text = WEBHOOK_URL 
+    urlBox.TextColor3 = Color3.fromRGB(0, 0, 0)
+    urlBox.TextSize = 14
+    urlBox.Parent = mainFrame
     
-    -- Mulai monitoring chat
-    monitorChat()
-    notify('NIGHTMARE LOADER', 'Fish Detector Aktif. Memonitor chat.', true)
-end)
+    -- Event untuk mengupdate URL saat pengguna mengetik
+    urlBox.Changed:Connect(function(property)
+        if property == "Text" then
+            WEBHOOK_URL = urlBox.Text
+        end
+    end)
+    
+    local testButton = Instance.new("TextButton")
+    testButton.Size = UDim2.new(0.4, 0, 0, 30)
+    testButton.Position = UDim2.new(0.05, 0, 0.6, 0)
+    testButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+    testButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    testButton.Text = "TEST WEBHOOK"
+    testButton.Font = Enum.Font.SourceSansBold
+    testButton.TextSize = 16
+    testButton.Parent = mainFrame
+
+    -- Event untuk menguji webhook
+    testButton.MouseButton1Click:Connect(function()
+        if testWebhook() then
+            testButton.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
+            task.wait(1)
+            testButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+        else
+            testButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+            task.wait(1)
+            testButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+        end
+    end)
+
+    local rarityButton = Instance.new("TextButton")
+    rarityButton.Size = UDim2.new(0.4, 0, 0, 30)
+    rarityButton.Position = UDim2.new(0.55, 0, 0.6, 0)
+    rarityButton.BackgroundColor3 = Color3.fromRGB(0, 0, 150)
+    rarityButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    rarityButton.Text = "Rarity: " .. MIN_RARITY_TO_SEND
+    rarityButton.Font = Enum.Font.SourceSansBold
+    rarityButton.TextSize = 16
+    rarityButton.Parent = mainFrame
+    
+    -- Fungsi untuk mengganti rarity
+    local rarityIndex = rarityPriority[MIN_RARITY_TO_SEND]
+    local rarityList = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "SECRET"}
+    
+    rarityButton.MouseButton1Click:Connect(function()
+        rarityIndex = rarityIndex % #rarityList + 1
+        MIN_RARITY_TO_SEND = rarityList[rarityIndex]
+        rarityButton.Text = "Rarity: " .. MIN_RARITY_TO_SEND
+        notify("SETTING", "Minimum Rarity diatur ke: " .. MIN_RARITY_TO_SEND, true)
+    end)
+end
+
+-- Inisialisasi
+pcall(createUI)
+pcall(monitorChat)
+
+notify('NIGHTMARE LOADER', 'Fish Detector Loaded. Cari kotak CONFIG di layar.', true)
